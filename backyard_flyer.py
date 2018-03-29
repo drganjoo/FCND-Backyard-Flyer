@@ -8,7 +8,6 @@ from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection, WebSocketConnection  # noqa: F401
 from udacidrone.messaging import MsgID
 
-
 class States(Enum):
     MANUAL = 0
     ARMING = 1
@@ -17,52 +16,107 @@ class States(Enum):
     LANDING = 4
     DISARMING = 5
 
+class EventHandler:
+    def __init__(self, planner, msg_id):
+        self.planner = planner
+        self.managed_states = set()
+        self.planner.register_callback(msg_id, self.event_callback)
 
-class BackyardFlyer(Drone):
+    def register(self, state):
+        if isinstance(state, list):
+            for s in state:
+                self.managed_states.add(s) 
+        else:
+            self.managed_states.add(state)
 
-    def __init__(self, connection):
-        super().__init__(connection)
+    def event_callback(self):
+        if self.planner.flight_state in self.managed_states:
+            self.planner.invoke_state()
 
-        self.target_position = np.array([0.0, 0.0, 0.0])
-        self.all_waypoints = []
-        self.in_mission = True
-        self.check_state = {}
-
-        # initial state
-        self.flight_state = States.MANUAL
-
-        # TODO: Register all your callbacks here
-        self.register_callback(MsgID.LOCAL_POSITION, self.local_position_callback)
-        self.register_callback(MsgID.LOCAL_VELOCITY, self.velocity_callback)
-        self.register_callback(MsgID.STATE, self.state_callback)
-
-    def local_position_callback(self):
-        if self.flight_state == States.TAKEOFF:
-            altitude = -1.0 * self.local_position[2]
-
-            if altitude > 0.95 * self.target_position[2]:
-                self.waypoint_transition()
-                
-    def velocity_callback(self):
-        """
-        TODO: Implement this method
-
-        This triggers when `MsgID.LOCAL_VELOCITY` is received and self.local_velocity contains new data
-        """
-        pass
-
-    def state_callback(self):
-        # this is the heartbeat message sent by the drone. Is called multiple times
-        # during a second
-        if self.flight_state == States.MANUAL:
-            self.arming_transition()
-        elif self.flight_state == States.ARMING:
-            self.takeoff_transition()
+class StateNode:
+    def __init__(self, event_handler, pre_condition, transition):
+        self.event_handler = event_handler
+        self.pre_condition = pre_condition
+        self.transition = transition
+        
+class BoxPath:
+    def __init__(self):
+        self.all_waypoints = self.calculate_box()
+        self.next_index = 0
+        self.current_target = []
 
     def calculate_box(self):
         # N, E, Alt, Heading
-        return np.array([[10.0, 0.0, 3.0, 0.0], [10.0]])
-        
+        return np.array([[10.0, 0.0, 3.0, 0.0], [10.0, 10.0, 3.0, 0.0], [0.0, 10.0, 3.0, 0.0], [0.0, 0.0, 3.0, 0.0]])
+
+    def get_next(self):
+        if self.next_index < len(self.all_waypoints):
+            next_waypoint = self.all_waypoints[self.next_index]
+            self.next_index += 1
+        else:
+            next_waypoint = []
+
+        self.current_target = next_waypoint
+        return next_waypoint
+
+    def has_reached_target(self, local_position):
+        if len(self.current_target) == 0:
+            return True
+
+        return False
+
+class BackyardFlyer(Drone):
+    def __init__(self, connection):
+        super().__init__(connection)
+
+        self.in_mission = False
+
+        self.takeoff_altitude = 3.0
+        self.heartbeat_handler = EventHandler(self, MsgID.STATE)
+        self.local_pos_handler = EventHandler(self, MsgID.LOCAL_POSITION)
+
+        self.path_planner = BoxPath()
+
+        # create state diagram and set the initial state
+        self.flight_state, self.state_diagram = self.create_state_diagram()
+
+    def create_state_diagram(self):
+        # each state in the diagram has a pre-condition that checks if the state
+        # is complete, has a transition function and next state
+        state_diagram = {}
+
+        state_diagram[States.MANUAL] = StateNode(self.heartbeat_handler, None, self.arming_transition)
+        state_diagram[States.ARMING] = StateNode(self.heartbeat_handler, None, self.takeoff_transition)
+        state_diagram[States.TAKEOFF] = StateNode(self.local_pos_handler, self.has_reached_altitude, self.waypoint_transition)
+
+        # register each state node with the respective event handler
+        for state, node in state_diagram.items():
+            node.event_handler.register(state)
+
+        return States.MANUAL, state_diagram
+
+    def invoke_state(self):
+        state_node = self.state_diagram[self.flight_state]
+
+        if state_node.pre_condition != None:
+            pre_condition_ok = state_node.pre_condition()
+        else:
+            pre_condition_ok = True
+
+        if pre_condition_ok:
+            state_node.transition()
+
+    def has_reached_altitude(self):
+        altitude = -1.0 * self.local_position[2]
+        return altitude > 0.95 * self.takeoff_altitude
+                
+    # def velocity_callback(self):
+    #     """
+    #     TODO: Implement this method
+
+    #     This triggers when `MsgID.LOCAL_VELOCITY` is received and self.local_velocity contains new data
+    #     """
+    #     pass
 
     def arming_transition(self):
         """
@@ -74,28 +128,20 @@ class BackyardFlyer(Drone):
         self.take_control()
         self.arm()
         self.set_home_position(*self.global_position)
+        self.in_mission = True
         self.flight_state = States.ARMING
 
     def takeoff_transition(self):
-        """
-        1. Set target_position altitude to 3.0m
-        2. Command a takeoff to 3.0m
-        3. Transition to the TAKEOFF state
-        """
-        print('taking_off')
-        self.target_position[2] = 3.0
-        self.takeoff(self.target_position[2])
+        self.takeoff(self.takeoff_altitude)
         self.flight_state = States.TAKEOFF
 
     def waypoint_transition(self):
-        """TODO: Fill out this method
-    
-        1. Command the next waypoint position
-        2. Transition to WAYPOINT state
-        """
-        self.flight_state = States.WAYPOINT
-        self.cmd_position(5.0, 0.0, 5.0, 0.0)
-        print("waypoint transition")
+        next_waypoint = self.path_planner.get_next()
+        if len(next_waypoint) > 0:
+            self.cmd_position(*next_waypoint)
+            self.flight_state = States.WAYPOINT
+            
+            print("transit to waypoint: ", next_waypoint)
 
     def landing_transition(self):
         """TODO: Fill out this method
