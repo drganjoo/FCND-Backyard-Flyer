@@ -16,30 +16,12 @@ class States(Enum):
     LANDING = 4
     DISARMING = 5
 
-class EventHandler:
-    def __init__(self, planner, msg_id):
-        self.planner = planner
-        self.managed_states = set()
-        self.planner.register_callback(msg_id, self.event_callback)
-
-    def register(self, state):
-        if isinstance(state, list):
-            for s in state:
-                self.managed_states.add(s) 
-        else:
-            self.managed_states.add(state)
-
-    def event_callback(self):
-        if self.planner.flight_state in self.managed_states:
-            self.planner.invoke_state()
-
-class StateNode:
-    def __init__(self, event_handler, pre_condition, transition):
-        self.event_handler = event_handler
-        self.pre_condition = pre_condition
-        self.transition = transition
-        
 class BoxPath:
+    class WayPointResult(Enum):
+        NOTREACHED = 0
+        REACHED = 1
+        PATH_COMPLETE = 2
+
     def __init__(self):
         self.all_waypoints = self.calculate_box()
         self.next_index = 0
@@ -48,10 +30,6 @@ class BoxPath:
     def calculate_box(self):
         # N, E, Alt, Heading
         return np.array([[10.0, 0.0, 3.0, 0.0], [10.0, 10.0, 3.0, 0.0], [0.0, 10.0, 3.0, 0.0], [0.0, 0.0, 3.0, 0.0]])
-
-    @property
-    def current(self):
-        return self.current_target
 
     def get_next(self):
         if self.next_index < len(self.all_waypoints):
@@ -63,11 +41,68 @@ class BoxPath:
         self.current_target = next_waypoint
         return next_waypoint
 
-    def has_reached_target(self, local_position):
-        if len(self.current_target) == 0:
-            return True
+    def is_close_to_current(self, local_position):
+        if self.current_target.size == 0:
+            return BoxPath.WayPointResult.PATH_COMPLETE
+        else:
+            # distance = square root of (x2-x1) + (y2-y1)
+            distance = ((self.current_target[0] - local_position[0]) ** 2 
+                        + (self.current_target[1] - local_position[1]) ** 2) ** 0.5
+            if distance < 1:
+                return BoxPath.WayPointResult.REACHED
 
-        return False
+            return BoxPath.WayPointResult.NOTREACHED
+
+class StateDiagram:
+    class StateNode:
+        def __init__(self, condition_fn, result_map):
+            self.condition_fn = condition_fn
+            self.result_map = result_map
+
+    def __init__(self, drone):
+        self.drone = drone
+        self.event_to_state = {}
+        drone.register_callback(MsgID.ANY, self.callback)
+
+    def callback(self, name):
+        if name in self.event_to_state:
+            state_diagram = self.event_to_state[name]
+
+            if self.drone.flight_state in state_diagram:
+                state_node = state_diagram[self.drone.flight_state]
+
+                if state_node.condition_fn is None:
+                    fn = state_node.result_map[True]
+                    fn()
+                else:
+                    result = state_node.condition_fn()
+                    if result in state_node.result_map:
+                        state_node.result_map[result]()
+
+    def add(self, flight_state, msg_id, condition_fn, *result_transition):
+        if msg_id not in self.event_to_state:
+            self.event_to_state[msg_id] = {}
+
+        state_diagram = self.event_to_state[msg_id]
+
+        # warn, in case a given event handler already has a state node for the 
+        # particular flight_state e.g MsgID.State already has work defined for
+        # Manual state
+        if flight_state in state_diagram:
+            print("\x1b[32m;State {0} already has a node attached to it".format(flight_state))
+
+        result_map = {}
+
+        # in case transition function is to be called only on True / False of the
+        # function then put an entry for True->Transition function
+        if condition_fn is None or len(result_transition) == 1:
+            result_map[True] = result_transition[0]
+        else:
+            result_map = {}
+            for i in range(0, len(result_transition), 2):
+                result_map[result_transition[i]] = result_transition[i+1]
+
+        state_diagram[flight_state] = self.StateNode(condition_fn, result_map)
 
 class BackyardFlyer(Drone):
     def __init__(self, connection):
@@ -76,8 +111,6 @@ class BackyardFlyer(Drone):
         self.in_mission = False
 
         self.takeoff_altitude = 3.0
-        self.heartbeat_handler = EventHandler(self, MsgID.STATE)
-        self.local_pos_handler = EventHandler(self, MsgID.LOCAL_POSITION)
 
         self.path_planner = BoxPath()
 
@@ -87,42 +120,25 @@ class BackyardFlyer(Drone):
     def create_state_diagram(self):
         # each state in the diagram has a pre-condition that checks if the state
         # is complete, has a transition function and next state
-        state_diagram = {}
-
-        state_diagram[States.MANUAL] = StateNode(self.heartbeat_handler, None, self.arming_transition)
-        state_diagram[States.ARMING] = StateNode(self.heartbeat_handler, None, self.takeoff_transition)
-        state_diagram[States.TAKEOFF] = StateNode(self.local_pos_handler, self.has_reached_altitude, self.waypoint_transition)
-        state_diagram[States.WAYPOINT] = StateNode(self.local_pos_handler, self.has_waypoint_reached, self.waypoint_transition)
-
-        # register each state node with the respective event handler
-        for state, node in state_diagram.items():
-            node.event_handler.register(state)
+        state_diagram = StateDiagram(self)
+        state_diagram.add(States.MANUAL, MsgID.STATE, None, self.arming_transition)
+        state_diagram.add(States.ARMING, MsgID.STATE, None, self.takeoff_transition)
+        state_diagram.add(States.TAKEOFF, MsgID.LOCAL_POSITION, self.has_reached_altitude, 
+                                                                self.waypoint_transition)
+        state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
+                                                                BoxPath.WayPointResult.REACHED,
+                                                                self.waypoint_transition,
+                                                                BoxPath.WayPointResult.PATH_COMPLETE,
+                                                                self.landing_transition)
 
         return States.MANUAL, state_diagram
-
-    def invoke_state(self):
-        state_node = self.state_diagram[self.flight_state]
-
-        if state_node.pre_condition != None:
-            pre_condition_ok = state_node.pre_condition()
-        else:
-            pre_condition_ok = True
-
-        if pre_condition_ok:
-            state_node.transition()
 
     def has_reached_altitude(self):
         altitude = -1.0 * self.local_position[2]
         return altitude > 0.95 * self.takeoff_altitude
 
     def has_waypoint_reached(self):
-        current = self.path_planner.current
-        if len(current) == 0:
-            self.landing_transition()
-        else:
-            # distance = square root of (x2-x1) + (y2-y1)
-            distance = ((current[0] - self.local_position[0]) ** 2 + (current[1] - self.local_position[1]) ** 2) ** 0.5
-            return distance < 1
+        return self.path_planner.is_close_to_current(self.local_position)
                 
     # def velocity_callback(self):
     #     """
@@ -151,7 +167,7 @@ class BackyardFlyer(Drone):
 
     def waypoint_transition(self):
         next_waypoint = self.path_planner.get_next()
-        if len(next_waypoint) > 0:
+        if next_waypoint.size > 0:
             self.cmd_position(*next_waypoint)
             self.flight_state = States.WAYPOINT
             
