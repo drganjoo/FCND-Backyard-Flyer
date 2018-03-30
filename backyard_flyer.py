@@ -49,6 +49,10 @@ class BoxPath:
         # N, E, Alt, Heading
         return np.array([[10.0, 0.0, 3.0, 0.0], [10.0, 10.0, 3.0, 0.0], [0.0, 10.0, 3.0, 0.0], [0.0, 0.0, 3.0, 0.0]])
 
+    @property
+    def current(self):
+        return self.current_target
+
     def get_next(self):
         if self.next_index < len(self.all_waypoints):
             next_waypoint = self.all_waypoints[self.next_index]
@@ -88,6 +92,7 @@ class BackyardFlyer(Drone):
         state_diagram[States.MANUAL] = StateNode(self.heartbeat_handler, None, self.arming_transition)
         state_diagram[States.ARMING] = StateNode(self.heartbeat_handler, None, self.takeoff_transition)
         state_diagram[States.TAKEOFF] = StateNode(self.local_pos_handler, self.has_reached_altitude, self.waypoint_transition)
+        state_diagram[States.WAYPOINT] = StateNode(self.local_pos_handler, self.has_waypoint_reached, self.waypoint_transition)
 
         # register each state node with the respective event handler
         for state, node in state_diagram.items():
@@ -109,6 +114,15 @@ class BackyardFlyer(Drone):
     def has_reached_altitude(self):
         altitude = -1.0 * self.local_position[2]
         return altitude > 0.95 * self.takeoff_altitude
+
+    def has_waypoint_reached(self):
+        current = self.path_planner.current
+        if len(current) == 0:
+            self.landing_transition()
+        else:
+            # distance = square root of (x2-x1) + (y2-y1)
+            distance = ((current[0] - self.local_position[0]) ** 2 + (current[1] - self.local_position[1]) ** 2) ** 0.5
+            return distance < 1
                 
     # def velocity_callback(self):
     #     """
