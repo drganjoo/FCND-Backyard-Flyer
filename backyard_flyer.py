@@ -17,6 +17,9 @@ class States(Enum):
     DISARMING = 5
 
 class BoxPath:
+    """The path drone is suppose to follow is represented by BoxPath. Additionally
+    It is used by the BackyadFlier to get the next waypoint and to figure out if 
+    the current waypoint has been reached or not"""
     class WayPointResult(Enum):
         NOTREACHED = 0
         REACHED = 1
@@ -24,7 +27,6 @@ class BoxPath:
 
     def __init__(self):
         self.all_waypoints = self.calculate_box()
-        self.next_index = 0
         self.current_target = []
 
     def calculate_box(self):
@@ -32,23 +34,22 @@ class BoxPath:
         distance = 10.0
         altitude = 3.0
         
-        return np.array([[distance, 0.0, altitude, 0.0], 
-                        [distance, distance, altitude, 0.0], 
-                        [0.0, distance, altitude, 0.0], 
-                        [0.0, 0.0, altitude, 0.0]])
+        return [[distance, 0.0, altitude, 0.0], 
+                [distance, distance, altitude, 0.0], 
+                [0.0, distance, altitude, 0.0], 
+                [0.0, 0.0, altitude, 0.0]]
 
     def get_next(self):
-        if self.next_index < len(self.all_waypoints):
-            next_waypoint = self.all_waypoints[self.next_index]
-            self.next_index += 1
+        if self.all_waypoints:
+            next_waypoint = self.all_waypoints.pop(0)
         else:
-            next_waypoint = np.array([])
+            next_waypoint = []
 
         self.current_target = next_waypoint
         return next_waypoint
 
     def is_close_to_current(self, local_position):
-        if self.current_target.size == 0:
+        if not self.current_target:
             return BoxPath.WayPointResult.PATH_COMPLETE
         else:
             # distance = square root of (x2-x1) + (y2-y1)
@@ -60,6 +61,14 @@ class BoxPath:
             return BoxPath.WayPointResult.NOTREACHED
 
 class StateDiagram:
+    """Represents a state diagram. Different flight states are handled behind
+    different callbacks. e.g. when MsgID.State is called, MANUAL, ARMING, DISARMING
+    are checked. Behind MsgID.LocalPosition WAYPOINT flight state is checked. This class
+    helps to consolidate these checks in one place.
+    A dictionary is maintained for each callback. Each key in the dictionary is the 
+    possible flight state and the value holds (a) a condition function to call and (b)
+    another dictionary that tells which transition function to call behind different
+    return values of the condition function."""
     class StateNode:
         def __init__(self, condition_fn, result_map):
             self.condition_fn = condition_fn
@@ -71,19 +80,18 @@ class StateDiagram:
         drone.register_callback(MsgID.ANY, self.callback)
 
     def callback(self, name):
+        # in case there is a state node that would like to work when the 'name' message
+        # arrives, call the condition function, check the return value against the possible
+        # transition functions and in case the return value matches one of the transition 
+        # function, call it
         if name in self.event_to_state:
             state_diagram = self.event_to_state[name]
 
             if self.drone.flight_state in state_diagram:
-                # only in manual state the control algorithm doesn't have to be
-                # in guided mode otherwise we make sure not to call the state flow
-                # in case the drone is not in guided mode
-                # if self.drone.flight_state != States.MANUAL and not self.drone.guided:
-                #     print('Not calling state flow', self.drone.flight_state, self.drone.guided)
-                #     return
-
                 state_node = state_diagram[self.drone.flight_state]
 
+                # in case there is no condition function, just call the transition
+                # function directly
                 if state_node.condition_fn is None:
                     fn = state_node.result_map[True]
                     fn()
@@ -100,7 +108,7 @@ class StateDiagram:
 
         # warn, in case a given event handler already has a state node for the 
         # particular flight_state e.g MsgID.State already has work defined for
-        # Manual state
+        # Manual state, warn the user
         if flight_state in state_diagram:
             print("\x1b[32m;State {0} already has a node attached to it".format(flight_state))
 
@@ -117,6 +125,7 @@ class StateDiagram:
 
         state_diagram[flight_state] = self.StateNode(condition_fn, result_map)
 
+
 class BackyardFlyer(Drone):
     def __init__(self, connection):
         super().__init__(connection)
@@ -129,19 +138,30 @@ class BackyardFlyer(Drone):
         self.flight_state, self.state_diagram = self.create_state_diagram()
 
     def create_state_diagram(self):
-        # each state in the diagram has a pre-condition that checks if the state
-        # is complete, has a transition function and next state
+        # each state in the diagram has a condition that checks if the state
+        # work is complete and has a transition function
         state_diagram = StateDiagram(self)
+
         state_diagram.add(States.MANUAL, MsgID.STATE, None, self.arming_transition)
+        # transition to TAKEOFF, if drone is armed and in ARMING state
         state_diagram.add(States.ARMING, MsgID.STATE, lambda: self.armed, 
                                 self.takeoff_transition)
+
+        # when the drone reaches the given take off altitude, switch to waypoint
         state_diagram.add(States.TAKEOFF, MsgID.LOCAL_POSITION, 
                                 self.has_reached_altitude, self.waypoint_transition)
+
+        # when one waypoint has been reached, move to the next one BUT if there
+        # are no more waypoints then go to landing transition                        
         state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
                                 BoxPath.WayPointResult.REACHED, self.waypoint_transition,
                                 BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
+
+        # when the drone has landed, go to disarm transition                                
         state_diagram.add(States.LANDING, MsgID.LOCAL_VELOCITY, self.has_landed, 
                                 self.disarming_transition)
+
+        # when drone has disarmed, go to manual mode                        
         state_diagram.add(States.DISARMING, MsgID.STATE, self.has_disarmed, 
                                 self.manual_transition)
 
@@ -177,7 +197,7 @@ class BackyardFlyer(Drone):
 
     def waypoint_transition(self):
         next_waypoint = self.path_planner.get_next()
-        if next_waypoint.size > 0:
+        if next_waypoint:
             self.cmd_position(*next_waypoint)
             self.flight_state = States.WAYPOINT
             
@@ -202,12 +222,6 @@ class BackyardFlyer(Drone):
         self.flight_state = States.MANUAL
         
     def start(self):
-        """This method is provided
-        
-        1. Open a log file
-        2. Start the drone connection
-        3. Close the log file
-        """
         print("Creating log file")
         self.start_log("Logs", "NavLog.txt")
         print("starting connection")
