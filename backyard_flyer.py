@@ -6,6 +6,9 @@ from collections import deque
 import numpy as np
 import visdom
 
+import matplotlib.pylab as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection, WebSocketConnection  # noqa: F401
 from udacidrone.messaging import MsgID
@@ -144,29 +147,16 @@ class StateDiagram:
         state_diagram[flight_state] = self.StateNode(condition_fn, result_map)
 
 
-class BackyardFlyer(Drone):
-    def __init__(self, connection):
-        super().__init__(connection)
-
-        self.in_mission = True
-        self.takeoff_altitude = 3.0
-        self.path_planner = BoxPath()
-
-        # create state diagram and set the initial state
-        self.flight_state, self.state_diagram = self.create_state_diagram()
-
-        self.create_plot()
-
-    def create_plot(self):
-        # visdom server should be started using python -m visdom.server
+class Plot:
+    def __init__(self, drone):
+        """python -m visdom.server"""
+        self.drone = drone
         self.v = visdom.Visdom()
-        if self.v.check_connection():
-            self.qsize = 500
-            self.local_position_q = deque(maxlen=self.qsize)
-            self.local_position_q.append([self.local_position[1], self.local_position[0]])
 
-            X = np.array(self.local_position_q)
-            self.local_position_plot = self.v.scatter(
+        if self.v.check_connection():
+            X = np.array([[self.drone.local_position[1], self.drone.local_position[0]]])
+
+            self.local_plot = self.v.scatter(
                 X, opts=dict(
                     title="Local position (north, east)", 
                     xlabel='East', 
@@ -179,19 +169,36 @@ class BackyardFlyer(Drone):
                     ytickstep=1 ,
                     ))
 
-            self.register_callback(MsgID.LOCAL_POSITION, self.update_local_pos_plot_callback)
+            drone.register_callback(MsgID.LOCAL_POSITION, self.localpos_callback)
         else:
             print('Could not connect to visdom server. Please start server using python -m visdom.server')
             self.v = None
 
-    def update_local_pos_plot_callback(self):
-        self.local_position_q.append([self.local_position[1], self.local_position[0]])
-        X = np.array(self.local_position_q)
-        self.v.scatter(X, win = self.local_position_plot, update = 'insert')
+    def localpos_callback(self):
+        X = np.array([[self.drone.local_position[1], self.drone.local_position[0]]])
+        self.v.scatter(X, win = self.local_plot, update = 'append')
 
-    # def _update_local_position(self, msg):
-    #     super()._update_local_position(msg)
-    #     print(msg.north, msg.east, msg.down)
+    @property
+    def is_connected(self):
+        return self.v.check_connection()
+
+
+class BackyardFlyer(Drone):
+    def __init__(self, connection):
+        super().__init__(connection)
+
+        self.in_mission = True
+        self.takeoff_altitude = 3.0
+        self.path_planner = BoxPath()
+
+        # create state diagram and set the initial state
+        self.flight_state, self.state_diagram = self.create_state_diagram()
+
+        self.plot = Plot(self)
+        #self.register_callback(MsgID.LOCAL_POSITION, self.log_local_position_callback)
+
+    # def log_local_position_callback(self):
+    #     self.log.log_data(self.local_position)
 
     def create_state_diagram(self):
         # each state in the diagram has a condition that checks if the state
@@ -281,13 +288,17 @@ class BackyardFlyer(Drone):
         self.flight_state = States.MANUAL
         
     def start(self):
-        print("Creating log file")
-        self.start_log("Logs", "NavLog.txt")
+        # no point in creating a log file, telemetry log is created by parent drone class
+        # and that has every message in it
+        # print("Creating log file, NavLog.txt for local position logging")
+        # self.start_log("Logs", "NavLog.txt")
+        # self.log.num_data = 3
+
         print("starting connection")
         self.connection.start()
-        print("Closing log file")
-        self.stop_log()
 
+        # print("Closing log file")
+        # self.stop_log()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
