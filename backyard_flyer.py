@@ -178,6 +178,7 @@ class BackyardFlyer(Drone):
             print("transit to waypoint: ", next_waypoint)
 
     def landing_transition(self):
+        # make sure the drone has stopped moving and then land
         self.land()
         self.flight_state = States.LANDING
 
