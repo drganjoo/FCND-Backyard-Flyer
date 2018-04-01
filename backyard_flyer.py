@@ -29,7 +29,13 @@ class BoxPath:
 
     def calculate_box(self):
         # N, E, Alt, Heading
-        return np.array([[10.0, 0.0, 3.0, 0.0], [10.0, 10.0, 3.0, 0.0], [0.0, 10.0, 3.0, 0.0], [0.0, 0.0, 3.0, 0.0]])
+        distance = 10.0
+        altitude = 3.0
+        
+        return np.array([[distance, 0.0, altitude, 0.0], 
+                        [distance, distance, altitude, 0.0], 
+                        [0.0, distance, altitude, 0.0], 
+                        [0.0, 0.0, altitude, 0.0]])
 
     def get_next(self):
         if self.next_index < len(self.all_waypoints):
@@ -109,9 +115,7 @@ class BackyardFlyer(Drone):
         super().__init__(connection)
 
         self.in_mission = False
-
         self.takeoff_altitude = 3.0
-
         self.path_planner = BoxPath()
 
         # create state diagram and set the initial state
@@ -123,13 +127,11 @@ class BackyardFlyer(Drone):
         state_diagram = StateDiagram(self)
         state_diagram.add(States.MANUAL, MsgID.STATE, None, self.arming_transition)
         state_diagram.add(States.ARMING, MsgID.STATE, None, self.takeoff_transition)
-        state_diagram.add(States.TAKEOFF, MsgID.LOCAL_POSITION, self.has_reached_altitude, 
-                                                                self.waypoint_transition)
+        state_diagram.add(States.TAKEOFF, MsgID.LOCAL_POSITION, 
+                                self.has_reached_altitude, self.waypoint_transition)
         state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
-                                                                BoxPath.WayPointResult.REACHED,
-                                                                self.waypoint_transition,
-                                                                BoxPath.WayPointResult.PATH_COMPLETE,
-                                                                self.landing_transition)
+                                BoxPath.WayPointResult.REACHED, self.waypoint_transition,
+                                BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
 
         return States.MANUAL, state_diagram
 
