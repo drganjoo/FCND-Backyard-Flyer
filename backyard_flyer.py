@@ -133,7 +133,8 @@ class BackyardFlyer(Drone):
         # is complete, has a transition function and next state
         state_diagram = StateDiagram(self)
         state_diagram.add(States.MANUAL, MsgID.STATE, None, self.arming_transition)
-        state_diagram.add(States.ARMING, MsgID.STATE, None, self.takeoff_transition)
+        state_diagram.add(States.ARMING, MsgID.STATE, lambda: self.armed, 
+                                self.takeoff_transition)
         state_diagram.add(States.TAKEOFF, MsgID.LOCAL_POSITION, 
                                 self.has_reached_altitude, self.waypoint_transition)
         state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
@@ -141,10 +142,14 @@ class BackyardFlyer(Drone):
                                 BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
         state_diagram.add(States.LANDING, MsgID.LOCAL_VELOCITY, self.has_landed, 
                                 self.disarming_transition)
-        state_diagram.add(States.DISARMING, MsgID.STATE, None, 
+        state_diagram.add(States.DISARMING, MsgID.STATE, self.has_disarmed, 
                                 self.manual_transition)
 
         return States.MANUAL, state_diagram
+
+    def has_disarmed(self):
+        # print('has drone disarmed', self.armed, self.guided)
+        return not (self.armed or self.guided)
 
     def has_reached_altitude(self):
         altitude = -1.0 * self.local_position[2]
@@ -159,8 +164,9 @@ class BackyardFlyer(Drone):
 
     def arming_transition(self):
         if not self.armed:
-            self.take_control()
             self.arm()
+
+        self.take_control()
         self.set_home_position(*self.global_position)
         self.in_mission = True
         self.flight_state = States.ARMING
@@ -179,15 +185,18 @@ class BackyardFlyer(Drone):
 
     def landing_transition(self):
         # make sure the drone has stopped moving and then land
-        self.land()
-        self.flight_state = States.LANDING
+        if ((self.local_velocity[0] + self.local_velocity[1]) ** 2.0) ** 0.5 < .1:
+            self.land()
+            self.flight_state = States.LANDING
 
     def disarming_transition(self):
+        print('disarming')
         self.disarm()
         self.release_control()
+        self.flight_state = States.DISARMING
 
     def manual_transition(self):
-        self.release_control()
+        print('Manual transition')
         self.stop()
         self.in_mission = False
         self.flight_state = States.MANUAL
