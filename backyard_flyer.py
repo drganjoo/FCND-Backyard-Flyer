@@ -78,8 +78,9 @@ class StateDiagram:
                 # only in manual state the control algorithm doesn't have to be
                 # in guided mode otherwise we make sure not to call the state flow
                 # in case the drone is not in guided mode
-                if self.drone.flight_state != States.MANUAL and not self.drone.guided:
-                    return
+                # if self.drone.flight_state != States.MANUAL and not self.drone.guided:
+                #     print('Not calling state flow', self.drone.flight_state, self.drone.guided)
+                #     return
 
                 state_node = state_diagram[self.drone.flight_state]
 
@@ -141,7 +142,7 @@ class BackyardFlyer(Drone):
         state_diagram.add(States.LANDING, MsgID.LOCAL_VELOCITY, self.has_landed, 
                                 self.disarming_transition)
         state_diagram.add(States.DISARMING, MsgID.STATE, None, 
-                                self.end_transition)
+                                self.manual_transition)
 
         return States.MANUAL, state_diagram
 
@@ -151,9 +152,7 @@ class BackyardFlyer(Drone):
 
     def has_landed(self):
         altitude = -1.0 * self.local_position[2]
-        if altitude < 0.5 and self.local_velocity[2] < 0.1:
-            print("Landed")
-            self.flight_state = States.DISARMING            
+        return altitude < 0.5 and self.local_velocity[2] < 0.1
 
     def has_waypoint_reached(self):
         return self.path_planner.is_close_to_current(self.local_position)
@@ -191,10 +190,6 @@ class BackyardFlyer(Drone):
         self.stop()
         self.in_mission = False
         self.flight_state = States.MANUAL
-
-    def end_transition(self):
-        self.release_control()
-        self.connection.stop()
         
     def start(self):
         """This method is provided
