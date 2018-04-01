@@ -1,8 +1,10 @@
 import argparse
 import time
 from enum import Enum
+from collections import deque
 
 import numpy as np
+import visdom
 
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection, WebSocketConnection  # noqa: F401
@@ -136,6 +138,36 @@ class BackyardFlyer(Drone):
 
         # create state diagram and set the initial state
         self.flight_state, self.state_diagram = self.create_state_diagram()
+
+        self.create_plot()
+
+    def create_plot(self):
+        self.v = visdom.Visdom()
+        assert self.v.check_connection()
+        self.qsize = 500
+        self.local_position_q = deque(maxlen=self.qsize)
+        self.local_position_q.append([self.local_position[1], self.local_position[0]])
+
+        X = np.array(self.local_position_q)
+        self.local_position_plot = self.v.scatter(
+            X, opts=dict(
+                title="Local position (north, east)", 
+                xlabel='East', 
+                ylabel='North',
+                xtickmin=-5,
+                xtickmax=15,
+                xtickstep=1,
+                ytickmin=-5,
+                ytickmax=15,
+                ytickstep=1,
+                ))
+
+        self.register_callback(MsgID.LOCAL_POSITION, self.update_local_pos_plot_callback)
+
+    def update_local_pos_plot_callback(self):
+        self.local_position_q.append([self.local_position[1], self.local_position[0]])
+        X = np.array(self.local_position_q)
+        self.v.scatter(X, win = self.local_position_plot, update = 'insert')
 
     def create_state_diagram(self):
         # each state in the diagram has a condition that checks if the state
