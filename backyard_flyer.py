@@ -42,7 +42,7 @@ class BoxPath:
             next_waypoint = self.all_waypoints[self.next_index]
             self.next_index += 1
         else:
-            next_waypoint = []
+            next_waypoint = np.array([])
 
         self.current_target = next_waypoint
         return next_waypoint
@@ -132,12 +132,18 @@ class BackyardFlyer(Drone):
         state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
                                 BoxPath.WayPointResult.REACHED, self.waypoint_transition,
                                 BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
+        state_diagram.add(States.LANDING, MsgID.LOCAL_VELOCITY, self.has_landed, 
+                                self.disarming_transition)
 
         return States.MANUAL, state_diagram
 
     def has_reached_altitude(self):
         altitude = -1.0 * self.local_position[2]
         return altitude > 0.95 * self.takeoff_altitude
+
+    def has_landed(self):
+        print(self._velocity_down)
+        print(self.attitude)
 
     def has_waypoint_reached(self):
         return self.path_planner.is_close_to_current(self.local_position)
@@ -176,12 +182,8 @@ class BackyardFlyer(Drone):
             print("transit to waypoint: ", next_waypoint)
 
     def landing_transition(self):
-        """TODO: Fill out this method
-        
-        1. Command the drone to land
-        2. Transition to the LANDING state
-        """
-        print("landing transition")
+        self.land()
+        self.flight_state = States.LANDING
 
     def disarming_transition(self):
         """TODO: Fill out this method
@@ -192,15 +194,6 @@ class BackyardFlyer(Drone):
         print("disarm transition")
 
     def manual_transition(self):
-        """This method is provided
-        
-        1. Release control of the drone
-        2. Stop the connection (and telemetry log)
-        3. End the mission
-        4. Transition to the MANUAL state
-        """
-        print("manual transition")
-
         self.release_control()
         self.stop()
         self.in_mission = False
