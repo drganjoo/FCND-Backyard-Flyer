@@ -75,6 +75,12 @@ class StateDiagram:
             state_diagram = self.event_to_state[name]
 
             if self.drone.flight_state in state_diagram:
+                # only in manual state the control algorithm doesn't have to be
+                # in guided mode otherwise we make sure not to call the state flow
+                # in case the drone is not in guided mode
+                if self.drone.flight_state != States.MANUAL and not self.drone.guided:
+                    return
+
                 state_node = state_diagram[self.drone.flight_state]
 
                 if state_node.condition_fn is None:
@@ -134,6 +140,8 @@ class BackyardFlyer(Drone):
                                 BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
         state_diagram.add(States.LANDING, MsgID.LOCAL_VELOCITY, self.has_landed, 
                                 self.disarming_transition)
+        state_diagram.add(States.DISARMING, MsgID.STATE, None, 
+                                self.end_transition)
 
         return States.MANUAL, state_diagram
 
@@ -142,19 +150,13 @@ class BackyardFlyer(Drone):
         return altitude > 0.95 * self.takeoff_altitude
 
     def has_landed(self):
-        print(self._velocity_down)
-        print(self.attitude)
+        altitude = -1.0 * self.local_position[2]
+        if altitude < 0.5 and self.local_velocity[2] < 0.1:
+            print("Landed")
+            self.flight_state = States.DISARMING            
 
     def has_waypoint_reached(self):
         return self.path_planner.is_close_to_current(self.local_position)
-                
-    # def velocity_callback(self):
-    #     """
-    #     TODO: Implement this method
-
-    #     This triggers when `MsgID.LOCAL_VELOCITY` is received and self.local_velocity contains new data
-    #     """
-    #     pass
 
     def arming_transition(self):
         if not self.armed:
@@ -181,12 +183,8 @@ class BackyardFlyer(Drone):
         self.flight_state = States.LANDING
 
     def disarming_transition(self):
-        """TODO: Fill out this method
-        
-        1. Command the drone to disarm
-        2. Transition to the DISARMING state
-        """
-        print("disarm transition")
+        self.disarm()
+        self.release_control()
 
     def manual_transition(self):
         self.release_control()
@@ -194,6 +192,10 @@ class BackyardFlyer(Drone):
         self.in_mission = False
         self.flight_state = States.MANUAL
 
+    def end_transition(self):
+        self.release_control()
+        self.connection.stop()
+        
     def start(self):
         """This method is provided
         
