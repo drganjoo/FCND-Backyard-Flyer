@@ -157,14 +157,9 @@ class BackyardFlyer(Drone):
     #     pass
 
     def arming_transition(self):
-        """
-        1. Take control of the drone
-        2. Pass an arming command
-        3. Set the home location to current position
-        4. Transition to the ARMING state
-        """
-        self.take_control()
-        self.arm()
+        if not self.armed:
+            self.take_control()
+            self.arm()
         self.set_home_position(*self.global_position)
         self.in_mission = True
         self.flight_state = States.ARMING
