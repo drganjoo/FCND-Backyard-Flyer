@@ -2,23 +2,25 @@
 
 ## Background
 
-Udacity Simulator has been used for flying the drone in a 10m box. Initially the drone is commanded to arm and takeoff. Then it is commanded to follow a box pattern and finally to land.
+The objective of this project was to make the drone take off and fly in a box of 10m at 3m altitude. Initially the drone is commanded to arm, takeoff and then it is commanded to follow a box pattern and finally to land.
 
 Communication with the Udacity Simulator is done using MavLink.
 
 ## Video
 
-![FCND-Simulator.mp4](submission/FCND-Simulator.mp4)
+[FCND-Simulator.mp4](submission/FCND-Simulator.mp4)
 
 ### Data Plots
 
-visdom and matplotlib have been used for generating plot for the data.
+visdom and matplotlib have been used for generating a graphical plot for the local position. Scatter plot is generated while the code is executing. Visdom server can be launched using ```python -m visdom.server```. The 3D graph is plotted using the log file that is generated when the drone was flying the pattern. A python file plot.py is to be called to geenrate the 3D plot (It uses Drone.read_telemetry_data to load the csv data and plot 3d graph on visdom)
 
 ![Plot](submission/plot.png)
 
 *Note: 3D Plot Reference: https://anaconda.org/fireval/trajectory-visualization/notebook 
 
 ## Code Changes
+
+### State Diagram
 
 I generally like to keep my state diagram in one place so that it is easier to figure out what each state is doing. IN this regard, I have changed the code sample to move out state diagram into a seperate class 'StateDiagram'. In BackyardFlier class the function ```create_state_diagram``` has the complete code for the states. Each call lists out the state, event handler that is to be used for testing the condition on which state transition function is to be called.
 
@@ -41,9 +43,9 @@ Similarly:
 
 The above call says that when the drone is in WAYPOINT state, when event LOCAL_POSITION is called, ```has_waypoint_reached``` should be called and if it returns REACHED, then the drone should move to the next way point but if COMPLETE is returned then the drone should go to the landing_transition.
 
-## Plot
+### BoxPath
 
-Visdom module is used for generating a scatter plot while the code is executing. The log file can seperately be parsed using plot.py (which uses Drone.read_telemetry_data to load the csv data and plot 3d graph on visdom)
+A seperate class ```BoxPath``` is used for generating waypoints.
 
 # Original ReadME Contents
 
