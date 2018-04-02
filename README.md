@@ -20,7 +20,30 @@ visdom and matplotlib have been used for generating plot for the data.
 
 ## Code Changes
 
-The complete state diagram has been implemented in a way that it is visible from 
+I generally like to keep my state diagram in one place so that it is easier to figure out what each state is doing. IN this regard, I have changed the code sample to move out state diagram into a seperate class 'StateDiagram'. In BackyardFlier class the function ```create_state_diagram``` has the complete code for the states. Each call lists out the state, event handler that is to be used for testing the condition on which state transition function is to be called.
+
+e.g.
+
+```
+        state_diagram.add(States.ARMING, MsgID.STATE, lambda: self.armed, 
+                                self.takeoff_transition)
+```
+
+The above call says that if the drone is in the Arming state, then when MsgID.State callback is called, it should be checked that the drone is armed and if it is then the function ```takeoff_transition``` should be called.
+
+Similarly:
+
+```
+        state_diagram.add(States.WAYPOINT, MsgID.LOCAL_POSITION, self.has_waypoint_reached, 
+                                BoxPath.WayPointResult.REACHED, self.waypoint_transition,
+                                BoxPath.WayPointResult.PATH_COMPLETE, self.landing_transition)
+```
+
+The above call says that when the drone is in WAYPOINT state, when event LOCAL_POSITION is called, ```has_waypoint_reached``` should be called and if it returns REACHED, then the drone should move to the next way point but if COMPLETE is returned then the drone should go to the landing_transition.
+
+## Plot
+
+Visdom module is used for generating a scatter plot while the code is executing. The log file can seperately be parsed using plot.py (which uses Drone.read_telemetry_data to load the csv data and plot 3d graph on visdom)
 
 # Original ReadME Contents
 
