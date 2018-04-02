@@ -151,12 +151,12 @@ class Plot:
     def __init__(self, drone):
         """python -m visdom.server"""
         self.drone = drone
-        self.v = visdom.Visdom()
+        self.viz = visdom.Visdom()
 
-        if self.v.check_connection():
+        if self.viz.check_connection():
             X = np.array([[self.drone.local_position[1], self.drone.local_position[0]]])
 
-            self.local_plot = self.v.scatter(
+            self.local_plot = self.viz.scatter(
                 X, opts=dict(
                     title="Local position (north, east)", 
                     xlabel='East', 
@@ -176,7 +176,7 @@ class Plot:
 
     def localpos_callback(self):
         X = np.array([[self.drone.local_position[1], self.drone.local_position[0]]])
-        self.v.scatter(X, win = self.local_plot, update = 'append')
+        self.viz.scatter(X, win = self.local_plot, update = 'append')
 
     @property
     def is_connected(self):
@@ -286,6 +286,7 @@ class BackyardFlyer(Drone):
         self.stop()
         self.in_mission = False
         self.flight_state = States.MANUAL
+        print('Stop called and manual state set')
         
     def start(self):
         # no point in creating a log file, telemetry log is created by parent drone class
