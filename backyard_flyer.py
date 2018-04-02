@@ -79,28 +79,44 @@ class StateDiagram:
     def __init__(self, drone):
         self.drone = drone
         self.event_to_state = {}
-        drone.register_callback(MsgID.ANY, self.callback)
 
-    def callback(self, name):
+        drone.register_callback(MsgID.STATE, self.state_callback)
+        drone.register_callback(MsgID.LOCAL_POSITION, self.local_position_callback)
+        drone.register_callback(MsgID.LOCAL_VELOCITY, self.local_velocity_callback)
+
+    def state_callback(self):
+        if self.drone.in_mission:
+            if MsgID.STATE in self.event_to_state:
+                state_diagram = self.event_to_state[MsgID.STATE]
+                self.call_state_node(state_diagram)
+
+    def local_position_callback(self):
+        if MsgID.LOCAL_POSITION in self.event_to_state:
+            state_diagram = self.event_to_state[MsgID.LOCAL_POSITION]
+            self.call_state_node(state_diagram)
+
+    def local_velocity_callback(self):
+        if MsgID.LOCAL_VELOCITY in self.event_to_state:
+            state_diagram = self.event_to_state[MsgID.LOCAL_VELOCITY]
+            self.call_state_node(state_diagram)
+
+    def call_state_node(self, state_diagram):
         # in case there is a state node that would like to work when the 'name' message
         # arrives, call the condition function, check the return value against the possible
         # transition functions and in case the return value matches one of the transition 
         # function, call it
-        if name in self.event_to_state:
-            state_diagram = self.event_to_state[name]
+        if self.drone.flight_state in state_diagram:
+            state_node = state_diagram[self.drone.flight_state]
 
-            if self.drone.flight_state in state_diagram:
-                state_node = state_diagram[self.drone.flight_state]
-
-                # in case there is no condition function, just call the transition
-                # function directly
-                if state_node.condition_fn is None:
-                    fn = state_node.result_map[True]
-                    fn()
-                else:
-                    result = state_node.condition_fn()
-                    if result in state_node.result_map:
-                        state_node.result_map[result]()
+            # in case there is no condition function, just call the transition
+            # function directly
+            if state_node.condition_fn is None:
+                fn = state_node.result_map[True]
+                fn()
+            else:
+                result = state_node.condition_fn()
+                if result in state_node.result_map:
+                    state_node.result_map[result]()
 
     def add(self, flight_state, msg_id, condition_fn, *result_transition):
         if msg_id not in self.event_to_state:
@@ -132,7 +148,7 @@ class BackyardFlyer(Drone):
     def __init__(self, connection):
         super().__init__(connection)
 
-        self.in_mission = False
+        self.in_mission = True
         self.takeoff_altitude = 3.0
         self.path_planner = BoxPath()
 
@@ -142,32 +158,40 @@ class BackyardFlyer(Drone):
         self.create_plot()
 
     def create_plot(self):
+        # visdom server should be started using python -m visdom.server
         self.v = visdom.Visdom()
-        assert self.v.check_connection()
-        self.qsize = 500
-        self.local_position_q = deque(maxlen=self.qsize)
-        self.local_position_q.append([self.local_position[1], self.local_position[0]])
+        if self.v.check_connection():
+            self.qsize = 500
+            self.local_position_q = deque(maxlen=self.qsize)
+            self.local_position_q.append([self.local_position[1], self.local_position[0]])
 
-        X = np.array(self.local_position_q)
-        self.local_position_plot = self.v.scatter(
-            X, opts=dict(
-                title="Local position (north, east)", 
-                xlabel='East', 
-                ylabel='North',
-                xtickmin=-5,
-                xtickmax=15,
-                xtickstep=1,
-                ytickmin=-5,
-                ytickmax=15,
-                ytickstep=1,
-                ))
+            X = np.array(self.local_position_q)
+            self.local_position_plot = self.v.scatter(
+                X, opts=dict(
+                    title="Local position (north, east)", 
+                    xlabel='East', 
+                    ylabel='North',
+                    xtickmin=-5,
+                    xtickmax=15,
+                    xtickstep=1,
+                    ytickmin=-5,
+                    ytickmax=15,
+                    ytickstep=1 ,
+                    ))
 
-        self.register_callback(MsgID.LOCAL_POSITION, self.update_local_pos_plot_callback)
+            self.register_callback(MsgID.LOCAL_POSITION, self.update_local_pos_plot_callback)
+        else:
+            print('Could not connect to visdom server. Please start server using python -m visdom.server')
+            self.v = None
 
     def update_local_pos_plot_callback(self):
         self.local_position_q.append([self.local_position[1], self.local_position[0]])
         X = np.array(self.local_position_q)
         self.v.scatter(X, win = self.local_position_plot, update = 'insert')
+
+    # def _update_local_position(self, msg):
+    #     super()._update_local_position(msg)
+    #     print(msg.north, msg.east, msg.down)
 
     def create_state_diagram(self):
         # each state in the diagram has a condition that checks if the state
@@ -215,12 +239,14 @@ class BackyardFlyer(Drone):
         return self.path_planner.is_close_to_current(self.local_position)
 
     def arming_transition(self):
+        self.take_control()
+
         if not self.armed:
             self.arm()
 
-        self.take_control()
-        self.set_home_position(*self.global_position)
-        self.in_mission = True
+        print('Setting home position to', self.global_position)
+        global_pos = self.global_position
+        self.set_home_position(global_pos[0], global_pos[1], global_pos[2])
         self.flight_state = States.ARMING
 
     def takeoff_transition(self):
@@ -230,6 +256,7 @@ class BackyardFlyer(Drone):
     def waypoint_transition(self):
         next_waypoint = self.path_planner.get_next()
         if next_waypoint:
+            # print('Setting command position to: ', *next_waypoint)
             self.cmd_position(*next_waypoint)
             self.flight_state = States.WAYPOINT
             
