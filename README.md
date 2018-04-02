@@ -1,4 +1,29 @@
 # FCND - Backyard Flyer Project
+
+## Background
+
+Udacity Simulator has been used for flying the drone in a 10m box. Initially the drone is commanded to arm and takeoff. Then it is commanded to follow a box pattern and finally to land.
+
+Communication with the Udacity Simulator is done using MavLink.
+
+## Video
+
+![FCND-Simulator.mp4](submission/FCND-Simulator.mp4)
+
+### Data Plots
+
+visdom and matplotlib have been used for generating plot for the data.
+
+![Plot](submission/plot.png)
+
+*Note: 3D Plot Reference: https://anaconda.org/fireval/trajectory-visualization/notebook 
+
+## Code Changes
+
+The complete state diagram has been implemented in a way that it is visible from 
+
+# Original ReadME Contents
+
 In this project, you'll set up a state machine using event-driven programming to autonomously flying a drone. You will be using flying a quadcopter in Unity simulator. After completing this assignment, you'll be familiar with sending commands and receiving incoming data from the drone. 
 
 The python code you write is similar to how the drone would be controlled from a ground station computer or an onboard flight computer. Since communication with the drone is done using MAVLink, you will be able to use your code to control an PX4 quadcopter autopilot with very little modification!
