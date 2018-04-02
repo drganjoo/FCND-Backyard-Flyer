@@ -12,7 +12,7 @@ Communication with the Udacity Simulator is done using MavLink.
 
 ### Data Plots
 
-visdom and matplotlib have been used for generating a graphical plot for the local position. Scatter plot is generated while the code is executing. Visdom server can be launched using ```python -m visdom.server```. The 3D graph is plotted using the log file that is generated when the drone was flying the pattern. A python file plot.py is to be called to geenrate the 3D plot (It uses Drone.read_telemetry_data to load the csv data and plot 3d graph on visdom)
+visdom and matplotlib have been used for generating a graphical plot for the local position. Scatter plot is generated while the code is executing. Visdom server can be launched using ```python -m visdom.server```. The 3D graph is plotted using the log file that is generated when the drone was flying the pattern. A python file plot.py is to be called to generate the 3D plot (It uses Drone.read_telemetry_data to load the csv data and plot 3d graph on visdom)
 
 ![Plot](submission/plot.png)
 
